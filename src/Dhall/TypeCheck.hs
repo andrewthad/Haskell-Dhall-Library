@@ -30,6 +30,7 @@ import Data.Traversable (forM)
 import Data.Typeable (Typeable)
 import Dhall.Core (Const(..), Expr(..), Var(..))
 import Dhall.Context (Context)
+import Control.Monad (join)
 
 import qualified Control.Monad.Trans.State.Strict as State
 import qualified Data.Map
@@ -536,6 +537,20 @@ typeWith ctx   (Note s e'       ) = case typeWith ctx e' of
     Right r                               -> Right r
 typeWith _     (Embed p         ) = do
     absurd p
+typeWith _      Xml               = do
+    return (Const Type)
+typeWith ctx (ExprXmlNode nodes)  = do
+    theTypes <- mapM 
+      (fmap Dhall.Core.normalize . typeWith ctx) 
+      (join $ fmap toList nodes)
+    let mustBeXml e = case e of
+          Xml -> Right ()
+          _ -> Left (TypeError ctx (ExprXmlNode nodes) (NotXml e))
+    mapM_ mustBeXml theTypes
+    Right Xml
+    
+    
+-- typeWith :: Context (Expr s X) -> Expr s X -> Either (TypeError s) (Expr s X)
 
 {-| `typeOf` is the same as `typeWith` with an empty context, meaning that the
     expression must be closed (i.e. no free variables), otherwise type-checking
@@ -595,6 +610,7 @@ data TypeMessage s
     | CantMultiply (Expr s X) (Expr s X)
     | NoDependentLet (Expr s X) (Expr s X)
     | NoDependentTypes (Expr s X) (Expr s X)
+    | NotXml (Expr s X)
     deriving (Show)
 
 shortTypeMessage :: TypeMessage s -> Builder
@@ -2742,6 +2758,11 @@ Your ❰let❱ expression is invalid because the input has type:
       where
         txt0 = Text.toStrict (Dhall.Core.pretty expr0)
         txt1 = Text.toStrict (Dhall.Core.pretty expr1)
+
+prettyTypeMessage (NotXml _) = ErrorMessages {..}
+  where
+    short = "Xml child was not xml"
+    long = "Xml child was not xml. Write this."
 
 buildBooleanOperator :: Text -> Expr s X -> Expr s X -> ErrorMessages
 buildBooleanOperator operator expr0 expr1 = ErrorMessages {..}

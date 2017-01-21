@@ -20,6 +20,8 @@ module Dhall.Core (
     , Path(..)
     , Var(..)
     , Expr(..)
+    , Node(..)
+    , Element(..)
 
     -- * Normalization
     , normalize
@@ -252,8 +254,10 @@ data Expr s a
     | Note s (Expr s a)
     -- | > Embed path                               ~  path
     | Embed a
+    -- | Xml Node Type
+    | Xml
     -- | Xml nodes
-    | ExprXmlNode (Node (Expr s a))
+    | ExprXmlNode [Node (Expr s a)]
     deriving (Functor, Foldable, Traversable, Show)
 
 data Node a
@@ -326,7 +330,8 @@ instance Monad (Expr s) where
     Field r x         >>= k = Field (r >>= k) x
     Note a b          >>= k = Note a (b >>= k)
     Embed r           >>= k = k r
-    ExprXmlNode n     >>= k = ExprXmlNode (fmap (>>= k) n)
+    Xml               >>= _ = Xml
+    ExprXmlNode n     >>= k = ExprXmlNode ((fmap.fmap) (>>= k) n)
 
 instance Bifunctor Expr where
     first _ (Const a         ) = Const a
@@ -380,7 +385,8 @@ instance Bifunctor Expr where
     first k (Field a b       ) = Field (first k a) b
     first k (Note a b        ) = Note (k a) (first k b)
     first _ (Embed a         ) = Embed a
-    first k (ExprXmlNode a   ) = ExprXmlNode (fmap (first k) a)
+    first _  Xml               = Xml
+    first k (ExprXmlNode a   ) = ExprXmlNode ((fmap.fmap) (first k) a)
 
     second = fmap
 
@@ -908,9 +914,10 @@ shift d v (Note _ b) = b'
 -- The Dhall compiler enforces that all embedded values are closed expressions
 -- and `shift` does nothing to a closed expression
 shift _ _ (Embed p) = Embed p
+shift _ _ Xml = Xml
 shift d v (ExprXmlNode b) = ExprXmlNode b'
   where
-    b' = fmap (shift d v) b
+    b' = (fmap.fmap) (shift d v) b
 
 {-| Substitute all occurrences of a variable with an expression
 
@@ -1033,9 +1040,10 @@ subst x e (Note _ b) = b'
 -- The Dhall compiler enforces that all embedded values are closed expressions
 -- and `subst` does nothing to a closed expression
 subst _ _ (Embed p) = Embed p
+subst _ _ Xml = Xml
 subst x e (ExprXmlNode b) = ExprXmlNode b'
   where
-    b' = fmap (subst x e) b
+    b' = (fmap.fmap) (subst x e) b
 
 {-| Reduce an expression to its normal form, performing beta reduction
 
@@ -1313,9 +1321,10 @@ normalize e = case e of
             r' -> Field r' x
     Note _ e' -> normalize e'
     Embed a -> Embed a
+    Xml -> Xml
     ExprXmlNode es -> ExprXmlNode es'
       where
-        es' = fmap normalize es
+        es' = (fmap.fmap) normalize es
   where
     -- This is to avoid a `Show` constraint on the @a@ and @s@ in the type of
     -- `normalize`.  In theory, this might change a failing repro case into
@@ -1486,7 +1495,8 @@ isNormalized e = case shift 0 "_" e of  -- `shift` is a hack to delete `Note`
             _ -> True
     Note _ e' -> isNormalized e'
     Embed _ -> True
-    ExprXmlNode es -> all isNormalized es
+    Xml -> True
+    ExprXmlNode es -> and (fmap (all isNormalized) es)
 
 {-| Utility function used to throw internal errors that should never happen
     (in theory) but that are not enforced by the type system
